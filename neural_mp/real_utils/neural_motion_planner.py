@@ -4,23 +4,25 @@ from typing import Tuple
 
 import meshcat
 import numpy as np
-import robomimic.utils.file_utils as FileUtils
-import robomimic.utils.torch_utils as TorchUtils
+# import robomimic.utils.file_utils as FileUtils
+# import robomimic.utils.torch_utils as TorchUtils
 import torch
 import torch._dynamo
 import urchin
 from robofin.pointcloud.torch import FrankaSampler
 from robofin.robots import FrankaRobot
 
-from neural_mp.envs.franka_real_env import FrankaRealEnv
-from neural_mp.real_utils.homography_utils import save_pointcloud
-from neural_mp.real_utils.model import NeuralMPModel
-
+# // from neuralmotionplanner.neural_mp.envs.franka_real_env import FrankaRealEnv
+from neuralmotionplanner.neural_mp.real_utils.homography_utils import save_pointcloud
+from neuralmotionplanner.neural_mp.real_utils.model import NeuralMPModel
+from neuralmotionplanner.neural_mp.real_utils.real_world_collision_checker import FrankaCollisionChecker
+from panda_utils import q_min, q_max
+from ReplicaCAD_point_cloud import visualize_point_cloud
 
 class NeuralMP:
     def __init__(
         self,
-        env: FrankaRealEnv,
+        # // env: FrankaRealEnv,
         model_url,
         train_mode,
         in_hand,
@@ -45,22 +47,24 @@ class NeuralMP:
         """
         # configuring PyTorch backend settings to optimize performance
         torch.backends.cudnn.benchmark = True
-        torch.set_float32_matmul_precision("medium")
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        torch.set_float32_matmul_precision("highest")
+        # torch.backends.cuda.matmul.allow_tf32 = True
+        # torch.backends.cudnn.allow_tf32 = True
         torch._dynamo.config.suppress_errors = True
 
-        self.device = TorchUtils.get_torch_device(try_to_use_cuda=True)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.policy = NeuralMPModel.from_pretrained(model_url)
+        # self.policy = NeuralMPModel()
         self.train_mode = train_mode
-        self.env = env
+        # // self.env = env
+        self.collision_checker = FrankaCollisionChecker()
         self.in_hand = in_hand
         self.in_hand_params = np.array(in_hand_params)
-        self.env.collision_checker.set_cuboid_params(
-            sizes=[[*self.in_hand_params[:3]]],
-            centers=[[*self.in_hand_params[3:6]]],
-            oris=[[*self.in_hand_params[6:]]],
-        )
+        # self.env.collision_checker.set_cuboid_params(
+        #     sizes=[[*self.in_hand_params[:3]]],
+        #     centers=[[*self.in_hand_params[3:6]]],
+        #     oris=[[*self.in_hand_params[6:]]],
+        # )
         self.max_rollout_len = max_rollout_len
         self.num_robot_points = num_robot_points
         self.num_obstacle_points = num_obstacle_points
@@ -78,41 +82,49 @@ class NeuralMP:
                 )
                 self.viz[f"robot/{idx}"].set_transform(v)
 
-    def get_scene_pcd(
-        self,
-        use_cache=False,
-        cache_name=None,
-        debug_raw_pcd=False,
-        debug_combined_pcd=False,
-        save_pcd=False,
-        save_file_name="combined",
-        filter=True,
-        denoise=False,
-    ):
-        input("press Enter to collect pcd...")
-        if use_cache:
-            points = np.load("real_world_test_set/collected_pcds/" + cache_name + "_pcd.npy")
-            colors = np.load("real_world_test_set/collected_pcds/" + cache_name + "_rgb.npy")
-            if debug_combined_pcd:
-                save_pointcloud(
-                    "neural_mp/outputs/debug/combined_pcd.ply",
-                    np.array(points),
-                    np.array(colors)[:, [2, 1, 0]],
-                )
-                self.env.visualize_ply("neural_mp/outputs/debug/combined_pcd.ply")
-        else:
-            least_occlusion_config = np.array([0.0, -0.45, 0.0, -1.0, 0.0, 1.9, 0.7])
-            self.env.move_robot_to_joint_state(joint_state=least_occlusion_config, time_to_go=4)
-            points, colors = self.env.get_scene_pcd(
-                debug_raw_pcd=debug_raw_pcd,
-                debug_combined_pcd=debug_combined_pcd,
-                save_pcd=save_pcd,
-                save_file_name=save_file_name,
-                filter=filter,
-                denoise=denoise,
-            )
-            self.env.reset()
-        return points, colors
+        # * Fix the gripper width to 0.04 keeping it open
+        self.gripper_width = 0.04
+
+        self.q_max_tensor = torch.tensor(q_max, device=self.device, dtype=torch.float32)
+        self.q_min_tensor = torch.tensor(q_min, device=self.device, dtype=torch.float32)
+
+    # // remove the following function
+    # def get_scene_pcd(
+    #     self,
+    #     use_cache=False,
+    #     cache_name=None,
+    #     debug_raw_pcd=False,
+    #     debug_combined_pcd=False,
+    #     save_pcd=False,
+    #     save_file_name="combined",
+    #     filter=True,
+    #     denoise=False,
+    # ):
+    #     input("press Enter to collect pcd...")
+    #     if use_cache:
+    #         points = np.load("real_world_test_set/collected_pcds/" + cache_name + "_pcd.npy")
+    #         colors = np.load("real_world_test_set/collected_pcds/" + cache_name + "_rgb.npy")
+    #         if debug_combined_pcd:
+    #             save_pointcloud(
+    #                 "neural_mp/outputs/debug/combined_pcd.ply",
+    #                 np.array(points),
+    #                 np.array(colors)[:, [2, 1, 0]],
+    #             )
+    #             self.env.visualize_ply("neural_mp/outputs/debug/combined_pcd.ply")
+    #     else:
+    #         least_occlusion_config = np.array([0.0, -0.45, 0.0, -1.0, 0.0, 1.9, 0.7])
+    #         self.env.move_robot_to_joint_state(joint_state=least_occlusion_config, time_to_go=4)
+    #         points, colors = self.env.get_scene_pcd(
+    #             debug_raw_pcd=debug_raw_pcd,
+    #             debug_combined_pcd=debug_combined_pcd,
+    #             save_pcd=save_pcd,
+    #             save_file_name=save_file_name,
+    #             filter=filter,
+    #             denoise=denoise,
+    #         )
+    #         self.env.reset()
+    #     return points, colors
+    # ////////////////////////////////////////////////
 
     def prepare_point_cloud_for_inference(
         self,
@@ -133,11 +145,10 @@ class NeuralMP:
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: xyz and rgb information of the combined point cloud that will be passed into the network.
         """
-        gripper_width = self.env.get_gripper_width() / 2
-        start_tensor_config = torch.from_numpy(np.concatenate([start_config, [gripper_width]])).to(
+        start_tensor_config = torch.from_numpy(np.concatenate([start_config, [self.gripper_width]])).to(
             self.device
         )
-        goal_tensor_config = torch.from_numpy(np.concatenate([goal_config, [gripper_width]])).to(
+        goal_tensor_config = torch.from_numpy(np.concatenate([goal_config, [self.gripper_width]])).to(
             self.device
         )
         robot_points = self.gpu_fk_sampler.sample(start_tensor_config, self.num_robot_points)
@@ -207,7 +218,7 @@ class NeuralMP:
         return xyz, obstacle_colors
 
     @torch.no_grad()
-    def motion_plan(self, start_config, goal_config, points, colors):
+    def motion_plan(self, start_config, goal_config, points, colors, debug=False):
         """
         Motion plan by rolling out the policy.
 
@@ -220,11 +231,11 @@ class NeuralMP:
         Returns:
             Tuple[list, bool, float]: output trajectory, planning success flag, and average rollout time.
         """
-        goal_pose = FrankaRobot.fk(goal_config, eff_frame="right_gripper")
-
+        # // goal_pose = FrankaRobot.fk(goal_config, eff_frame="right_gripper")
         pset_points, obs_colors = self.prepare_point_cloud_for_inference(
             start_config, goal_config, points, colors
         )
+
         point_cloud = pset_points.unsqueeze(0)
 
         self.policy.start_episode()
@@ -238,9 +249,7 @@ class NeuralMP:
         trajectory = [q]
         qt = q
 
-        gripper_width = self.env.get_gripper_width() / 2
-
-        def sampler(config, gripper_width=gripper_width):
+        def sampler(config, gripper_width=self.gripper_width):
             gripper_cfg = gripper_width * torch.ones((config.shape[0], 1), device=config.device)
             cfg = torch.cat((config, gripper_cfg), dim=1)
             if self.in_hand:
@@ -255,6 +264,8 @@ class NeuralMP:
         obs["current_angles"] = q
         obs["goal_angles"] = goal_angles
         obs["compute_pcd_params"] = point_cloud
+        if debug:
+            visualize_point_cloud(point_cloud.squeeze().cpu().numpy()[:, :3])
 
         ti0 = time.time()
         for i in range(self.max_rollout_len):
@@ -264,29 +275,51 @@ class NeuralMP:
             point_cloud[:, : samples.shape[1], :3] = samples
             obs["current_angles"] = qt
             obs["compute_pcd_params"] = point_cloud
+            if i % 10 == 0:
+                print(f"step: {i+1}, error: {torch.norm(qt - goal_angles)}")
+                if debug:
+                    visualize_point_cloud(point_cloud.squeeze().cpu().numpy()[:, :3])
+            # import pdb; pdb.set_trace()
+            
         ti1 = time.time()
         ave_rollout_time = (ti1 - ti0) / self.max_rollout_len
-        print(f"policy rollout time: {ti1 - ti0}")
+        total_rollout_time = ti1 - ti0
+        print(f"policy rollout time: {total_rollout_time}")
 
         output_traj = [t.squeeze().detach().cpu().numpy() for t in trajectory]
-        # check whether goal is reached
-        for i in range(len(output_traj)):
-            eff_pose = FrankaRobot.fk(output_traj[i], eff_frame="right_gripper")
-            pos_err = np.linalg.norm(eff_pose._xyz - goal_pose._xyz)
-            ori_err = np.abs(
-                np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians)
-            )
 
-            if (
-                np.linalg.norm(eff_pose._xyz - goal_pose._xyz) < 0.01
-                and np.abs(np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians))
-                < 15
-            ):
+        # check whether goal is reached
+
+        # // The original version use the goal pose to check if the goal is reached
+        # for i in range(len(output_traj)):
+        #     eff_pose = FrankaRobot.fk(output_traj[i], eff_frame="right_gripper")
+        #     pos_err = np.linalg.norm(eff_pose._xyz - goal_pose._xyz)
+        #     ori_err = np.abs(
+        #         np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians)
+        #     )
+        #     if (
+        #         np.linalg.norm(eff_pose._xyz - goal_pose._xyz) < 0.01
+        #         and np.abs(np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians))
+        #         < 15
+        #     ):
+        #         planning_success = True
+        #         output_traj = output_traj[: (i + 1)]
+        #         break
+
+        # print(f"sim results:\nstep: {i+1}\npos_err: {pos_err*100} cm\nori_err: {ori_err} deg")
+        # ////////////////////////////////////////////////
+
+        # * The modified version uses the goal joint angles to check if the goal is reached
+        for i in range(len(output_traj)):
+            # Check configuration error instead of end-effector pose error
+            config_err = np.linalg.norm(output_traj[i] - goal_config)
+
+            if config_err < 0.1:  # Adjust threshold as needed
                 planning_success = True
                 output_traj = output_traj[: (i + 1)]
                 break
 
-        print(f"sim results:\nstep: {i+1}\npos_err: {pos_err*100} cm\nori_err: {ori_err} deg")
+        print(f"sim results:\nstep: {i+1}\nconfig_err: {config_err}")
 
         if self.visualize:
             trajc = output_traj.copy()
@@ -297,7 +330,7 @@ class NeuralMP:
                 elif visual == "y":
                     print("simlating")
                     for idx_traj in range(len(trajc)):
-                        sim_config = np.append(trajc[idx_traj], gripper_width)
+                        sim_config = np.append(trajc[idx_traj], self.gripper_width)
                         for idx, (k, v) in enumerate(
                             self.urdf.visual_trimesh_fk(sim_config[:8]).items()
                         ):
@@ -321,7 +354,13 @@ class NeuralMP:
                             )
                         time.sleep(0.05)
 
-        return output_traj, planning_success, ave_rollout_time
+        return {
+            'start_state': start_config,
+            'goal_state': goal_config,
+            'solved': planning_success,
+            'path': output_traj,
+            'planning_time': total_rollout_time,
+        }
 
     @torch.no_grad()
     def motion_plan_with_tto(self, start_config, goal_config, points, colors, batch_size=100):
@@ -337,7 +376,7 @@ class NeuralMP:
         Returns:
             Tuple[list, bool, float]: output trajectory, planning success flag, and average rollout time.
         """
-        goal_pose = FrankaRobot.fk(goal_config, eff_frame="right_gripper")
+        # // goal_pose = FrankaRobot.fk(goal_config, eff_frame="right_gripper")
 
         pset_points, obs_colors = self.prepare_point_cloud_for_inference(
             start_config, goal_config, points, colors
@@ -367,8 +406,6 @@ class NeuralMP:
         trajectory = []
         qt = q
 
-        gripper_width = self.env.get_gripper_width() / 2
-
         obs = OrderedDict()
         obs["current_angles"] = q
         obs["goal_angles"] = goal_angles
@@ -377,7 +414,7 @@ class NeuralMP:
         # limit max_rollout_len up to 100, so gpu memory does not explode
         max_rollout_len = min(self.max_rollout_len, 100)
 
-        def sampler(config, gripper_width=gripper_width):
+        def sampler(config, gripper_width=self.gripper_width):
             gripper_cfg = gripper_width * torch.ones((config.shape[0], 1), device=config.device)
             cfg = torch.cat((config, gripper_cfg), dim=1)
             if self.in_hand:
@@ -410,7 +447,7 @@ class NeuralMP:
         scene_pcd = point_cloud[
             :, self.num_robot_points : self.num_robot_points + self.num_obstacle_points, :3
         ][goal_reaching].repeat(max_rollout_len, 1, 1)
-        waypoint_c_num = self.env.collision_checker.check_scene_collision_batch(
+        waypoint_c_num = self.collision_checker.check_scene_collision_batch(
             output_traj, scene_pcd, thred=0.01, sphere_repr_only=(not self.in_hand)
         )
         traj_c_num = torch.sum(waypoint_c_num.reshape(num_valid_traj, max_rollout_len), dim=1)
@@ -429,23 +466,35 @@ class NeuralMP:
         )
 
         # check whether goal is reached
+        # * The modified version uses the goal joint angles to check if the goal is reached
         for i in range(len(output_traj)):
-            eff_pose = FrankaRobot.fk(output_traj[i], eff_frame="right_gripper")
-            pos_err = np.linalg.norm(eff_pose._xyz - goal_pose._xyz)
-            ori_err = np.abs(
-                np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians)
-            )
+            # Check configuration error instead of end-effector pose error
+            config_err = np.linalg.norm(output_traj[i] - goal_config)
 
-            if (
-                np.linalg.norm(eff_pose._xyz - goal_pose._xyz) < 0.01
-                and np.abs(np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians))
-                < 15
-            ):
+            if config_err < 0.1:
                 planning_success = True
                 output_traj = output_traj[: (i + 1)]
                 break
 
-        print(f"sim results:\nstep: {i+1}\npos_err: {pos_err*100} cm\nori_err: {ori_err} deg")
+        # // The original version use the goal pose to check if the goal is reached
+        # for i in range(len(output_traj)):
+        #     eff_pose = FrankaRobot.fk(output_traj[i], eff_frame="right_gripper")
+        #     pos_err = np.linalg.norm(eff_pose._xyz - goal_pose._xyz)
+        #     ori_err = np.abs(
+        #         np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians)
+        #     )
+
+        #     if (
+        #         np.linalg.norm(eff_pose._xyz - goal_pose._xyz) < 0.01
+        #         and np.abs(np.degrees((eff_pose.so3._quat * goal_pose.so3._quat.conjugate).radians))
+        #         < 15
+        #     ):
+        #         planning_success = True
+        #         output_traj = output_traj[: (i + 1)]
+        #         break
+        # ////////////////////////////////////////////////
+
+        print(f"sim results:\nstep: {i+1}\nconfig_err: {config_err}")
         output_traj = np.concatenate((start_config.reshape(1, 7), output_traj), axis=0)
 
         if self.visualize:
@@ -457,7 +506,7 @@ class NeuralMP:
                 elif visual == "y":
                     print("simlating")
                     for idx_traj in range(len(trajc)):
-                        sim_config = np.append(trajc[idx_traj], gripper_width)
+                        sim_config = np.append(trajc[idx_traj], self.gripper_width)
                         for idx, (k, v) in enumerate(
                             self.urdf.visual_trimesh_fk(sim_config[:8]).items()
                         ):
