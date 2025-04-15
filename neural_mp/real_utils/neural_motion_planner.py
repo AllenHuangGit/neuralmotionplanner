@@ -18,6 +18,7 @@ from neuralmotionplanner.neural_mp.real_utils.model import NeuralMPModel
 from neuralmotionplanner.neural_mp.real_utils.real_world_collision_checker import FrankaCollisionChecker
 from panda_utils import q_min, q_max
 from ReplicaCAD_point_cloud import visualize_point_cloud
+from eval_mpnet import is_motion_valid_diffco
 
 class NeuralMP:
     def __init__(
@@ -27,7 +28,7 @@ class NeuralMP:
         train_mode,
         in_hand,
         in_hand_params=None,
-        max_rollout_len=100,
+        max_rollout_len=200,
         num_robot_points=2048,
         num_obstacle_points=4096,
         visualize=False,
@@ -218,7 +219,7 @@ class NeuralMP:
         return xyz, obstacle_colors
 
     @torch.no_grad()
-    def motion_plan(self, start_config, goal_config, points, colors, debug=False):
+    def motion_plan(self, start_config, goal_config, points, colors, si=None, space=None, debug=False):
         """
         Motion plan by rolling out the policy.
 
@@ -227,6 +228,9 @@ class NeuralMP:
             goal_config (np.ndarray): Joint angles of the robot at the goal of the task.
             points (np.ndarray): xyz information of the point cloud.
             colors (np.ndarray): rgb information of the point cloud for visualization.
+            si (object, optional): Space information for collision checking. Contain the TIS optimizer.
+            space (object, optional): Space information for collision checking.
+            debug (bool, optional): Whether to visualize the point cloud. Defaults to False.
 
         Returns:
             Tuple[list, bool, float]: output trajectory, planning success flag, and average rollout time.
@@ -270,6 +274,17 @@ class NeuralMP:
         ti0 = time.time()
         for i in range(self.max_rollout_len):
             qt = qt + self.policy.policy.get_action(obs_dict=obs)
+
+            # Diffco optimization
+            if si is not None:
+                previous_qt = trajectory[-1].squeeze().detach().cpu().numpy()
+                qt_candidate_np = qt.squeeze().detach().cpu().numpy()
+                is_local_motion_valid, optimized_qt = is_motion_valid_diffco(previous_qt, qt_candidate_np, space, si)
+                if is_local_motion_valid:
+                    qt = torch.tensor(optimized_qt, device=self.device, dtype=torch.float32).unsqueeze(0)
+                else:
+                    continue
+
             trajectory.append(qt)
             samples = sampler(qt).type_as(point_cloud)
             point_cloud[:, : samples.shape[1], :3] = samples
@@ -363,7 +378,7 @@ class NeuralMP:
         }
 
     @torch.no_grad()
-    def motion_plan_with_tto(self, start_config, goal_config, points, colors, batch_size=100):
+    def motion_plan_with_tto(self, start_config, goal_config, points, colors, batch_size=20):
         """
         Motion plan by rolling out the policy with batched samples and perform test time optimization
         to select the safest path to execute on the robot.
@@ -412,7 +427,7 @@ class NeuralMP:
         obs["compute_pcd_params"] = point_cloud
 
         # limit max_rollout_len up to 100, so gpu memory does not explode
-        max_rollout_len = min(self.max_rollout_len, 100)
+        max_rollout_len = min(self.max_rollout_len, 200)
 
         def sampler(config, gripper_width=self.gripper_width):
             gripper_cfg = gripper_width * torch.ones((config.shape[0], 1), device=config.device)
@@ -459,8 +474,9 @@ class NeuralMP:
             .numpy()
         )
         ti2 = time.time()
-        ave_rollout_time = (ti2 - ti0) / max_rollout_len
+        total_rollout_time = ti2 - ti0
         print(f"test time adaptation time: {ti2 - ti1}")
+        print(f"total time: {total_rollout_time}")
         print(
             f"The best trajectory out of {num_valid_traj}:\nnum_collisions: {traj_c_num[best_traj_idx]}\naverage num_collisions: {sum(traj_c_num)/num_valid_traj}"
         )
@@ -530,8 +546,14 @@ class NeuralMP:
                             )
                         time.sleep(0.05)
 
-        return output_traj, planning_success, ave_rollout_time
-
+        return {
+            'start_state': start_config,
+            'goal_state': goal_config,
+            'solved': planning_success,
+            'path': output_traj,
+            'planning_time': total_rollout_time,
+        }
+    
     def execute_motion_plan(self, plan, speed):
         """
         Execute a planned trajectory.

@@ -1,7 +1,7 @@
-numpy==1.23.5
+# numpy==1.23.5
 wandb
 ipdb
-pybullet==3.2.5
+# pybullet==3.2.5
 h5py
 opencv-python
 pytorch-lightning
@@ -11,7 +11,7 @@ black
 scipy
 imageio
 open3d
-git+https://github.com/fishbotics/atob@v0.0.1
+# git+https://github.com/fishbotics/atob@v0.0.1
 pyquaternion
 hydra-core
 imageio[ffmpeg]
@@ -28,7 +28,7 @@ numba==0.56.4
 av==10.0.0
 wheel==0.38.4
 setuptools==65.6.3
-gym==0.21.0
+# gym==0.21.0
 imagecodecs
 submitit
 plotly

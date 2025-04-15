@@ -4,7 +4,7 @@ import pybullet as p
 import torch
 from geometrout.primitive import Cuboid, Cylinder, Sphere
 
-from neural_mp.utils.geometry import ObjaMesh, construct_mixed_point_cloud
+from neuralmotionplanner.neural_mp.utils.geometry import ObjaMesh, construct_mixed_point_cloud
 from robofin.pointcloud.torch import FrankaSampler
 from robofin.robots import FrankaRobot
 

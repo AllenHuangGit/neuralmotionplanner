@@ -20,28 +20,28 @@ import pyquaternion
 import torch
 import urchin
 from atob.caelan_smoothing import smooth_cubic
-from manimo.actuators.arms.franka_arm import FrankaArm
-from manimo.actuators.grippers.polymetis_gripper import PolymetisGripper
-from manimo.environments.single_arm_env import SingleArmEnv
-from manimo.utils.helpers import Rate
+# // from manimo.actuators.arms.franka_arm import FrankaArm
+# // from manimo.actuators.grippers.polymetis_gripper import PolymetisGripper
+# // from manimo.environments.single_arm_env import SingleArmEnv
+# // from manimo.utils.helpers import Rate
 from ompl import base as ob
 from ompl import geometric as og
 from pyquaternion import Quaternion
 from robofin.pointcloud.torch import FrankaSampler
 from robofin.robots import FrankaRobot
 from scipy.spatial.transform import Rotation as R_scipy
-from torchcontrol.transform import Rotation as R
-from torchcontrol.transform import Transformation as T
+# // from torchcontrol.transform import Rotation as R
+# // from torchcontrol.transform import Transformation as T
 
-from neural_mp.real_utils.homography_utils import HomographyTransform, save_pointcloud
-from neural_mp.real_utils.real_world_collision_checker import FrankaCollisionChecker
-from neural_mp.utils.constants import (
+from neuralmotionplanner.neural_mp.real_utils.homography_utils import HomographyTransform, save_pointcloud
+# // from neuralmotionplanner.neural_mp.real_utils.real_world_collision_checker import FrankaCollisionChecker
+from neuralmotionplanner.neural_mp.utils.constants import (
     FRANKA_ACCELERATION_LIMIT,
     FRANKA_LOWER_LIMITS,
     FRANKA_UPPER_LIMITS,
     FRANKA_VELOCITY_LIMIT,
 )
-from neural_mp.utils.geometry import (
+from neuralmotionplanner.neural_mp.utils.geometry import (
     TorchCuboids,
     TorchCylinders,
     TorchSpheres,
@@ -176,22 +176,24 @@ class FrankaRealEnv:
             gripper_width (float, optional): Opening width of the gripper in meters.
             speed (float, optional): Speed for execution (rad/s).
         """
-        ctrl_hz = self.ctrl_hz  # in Manimo the default is 60Hz
-        if start_angles is None:
-            start_angles = self.get_joint_angles()
+        # // remove because of the import error
+        # ctrl_hz = self.ctrl_hz  # in Manimo the default is 60Hz
+        # if start_angles is None:
+        #     start_angles = self.get_joint_angles()
 
-        max_action = max(abs(action_target - start_angles))
-        num_steps = max(int(max_action / speed * ctrl_hz), 10)
+        # max_action = max(abs(action_target - start_angles))
+        # num_steps = max(int(max_action / speed * ctrl_hz), 10)
 
-        rate = Rate(ctrl_hz)
+        # rate = Rate(ctrl_hz)
 
-        for step in range(num_steps):
-            action_processed = (
-                start_angles + (action_target - start_angles) * (step + 1) / num_steps
-            )
-            action_processed = np.clip(action_processed, FRANKA_LOWER_LIMITS, FRANKA_UPPER_LIMITS)
-            self.step(joint_action=action_processed, gripper_action=gripper_width)
-            rate.sleep()
+        # for step in range(num_steps):
+        #     action_processed = (
+        #         start_angles + (action_target - start_angles) * (step + 1) / num_steps
+        #     )
+        #     action_processed = np.clip(action_processed, FRANKA_LOWER_LIMITS, FRANKA_UPPER_LIMITS)
+        #     self.step(joint_action=action_processed, gripper_action=gripper_width)
+        #     rate.sleep()
+        # ///////////////////////////
 
     def execute_plan(
         self,
@@ -546,7 +548,7 @@ class FrankaRealEnvManimo(FrankaRealEnv):
                 )
 
         faulthandler.enable()
-        self.env = SingleArmEnv(sensors_cfg, actuators_cfg, env_cfg)  # no reset at the low level
+        # // self.env = SingleArmEnv(sensors_cfg, actuators_cfg, env_cfg)  # no reset at the low level
         self.im_width = camera_width
         self.im_height = camera_height
         self.ctrl_hz = actuators_cfg.arm.arm0.arm_cfg.hz if not cam_only else None
@@ -554,7 +556,7 @@ class FrankaRealEnvManimo(FrankaRealEnv):
             self.canonical_joint_pose = np.array(actuators_cfg.arm.arm0.arm_cfg.home)
 
         if not cam_only:
-            assert type(self.env.actuators[0]) == FrankaArm
+            # // assert type(self.env.actuators[0]) == FrankaArm
             self.robot_model = self.env.actuators[0].robot.robot_model
         self.fk_sampler = FrankaSampler("cpu", use_cache=False)
         self.urdf = urchin.URDF.load(FrankaRobot.urdf)
@@ -644,14 +646,14 @@ class FrankaRealEnvManimo(FrankaRealEnv):
             position_t, orientation_t, rest_pose=q0_t
         )
 
-        # Check result
-        pos_output, quat_output = self.robot_model.forward_kinematics(joint_pos_output)
-        pose_desired = T.from_rot_xyz(R.from_quat(orientation_t), position_t)
-        pose_output = T.from_rot_xyz(R.from_quat(quat_output), pos_output)
-        err = torch.linalg.norm((pose_desired * pose_output.inv()).as_twist())
-        ik_sol_found = err < tol
+        # // # Check result
+        # // pos_output, quat_output = self.robot_model.forward_kinematics(joint_pos_output)
+        # // pose_desired = T.from_rot_xyz(R.from_quat(orientation_t), position_t)
+        # // pose_output = T.from_rot_xyz(R.from_quat(quat_output), pos_output)
+        # // err = torch.linalg.norm((pose_desired * pose_output.inv()).as_twist())
+        # // ik_sol_found = err < tol
 
-        return joint_pos_output.numpy(), ik_sol_found.numpy()
+        # // return joint_pos_output.numpy(), ik_sol_found.numpy()
 
     def get_joint_from_ee_pose(self, target_ee_pose):
         """
@@ -799,9 +801,9 @@ class FrankaRealEnvManimo(FrankaRealEnv):
         """
 
         if joint_state is not None:
-            assert (
-                type(self.env.actuators[0]) == FrankaArm
-            )  # should always make sure you are calling the right class
+            # // assert (
+            # //     type(self.env.actuators[0]) == FrankaArm
+            # // )  # should always make sure you are calling the right class
             frankarm = self.env.actuators[0]
             frankarm.soft_ctrl(joint_state, time_to_go)
 

@@ -25,7 +25,7 @@ from typing import Tuple, Union
 import numpy as np
 import torch
 
-from neural_mp.utils.constants import (
+from neuralmotionplanner.neural_mp.utils.constants import (
     FRANKA_ACCELERATION_LIMIT,
     FRANKA_LOWER_LIMITS,
     FRANKA_UPPER_LIMITS,
