@@ -18,7 +18,7 @@ from neuralmotionplanner.neural_mp.real_utils.model import NeuralMPModel
 from neuralmotionplanner.neural_mp.real_utils.real_world_collision_checker import FrankaCollisionChecker
 from panda_utils import q_min, q_max
 from ReplicaCAD_point_cloud import visualize_point_cloud
-from eval_mpnet import is_motion_valid_diffco
+from eval_mpnet import is_motion_valid_diffco, is_motion_valid
 
 class NeuralMP:
     def __init__(
@@ -28,7 +28,7 @@ class NeuralMP:
         train_mode,
         in_hand,
         in_hand_params=None,
-        max_rollout_len=200,
+        max_rollout_len=1500,
         num_robot_points=2048,
         num_obstacle_points=4096,
         visualize=False,
@@ -219,7 +219,7 @@ class NeuralMP:
         return xyz, obstacle_colors
 
     @torch.no_grad()
-    def motion_plan(self, start_config, goal_config, points, colors, si=None, space=None, debug=False):
+    def motion_plan(self, start_config, goal_config, points, colors, si, space, diffco=False, replan=False, debug=False):
         """
         Motion plan by rolling out the policy.
 
@@ -228,8 +228,10 @@ class NeuralMP:
             goal_config (np.ndarray): Joint angles of the robot at the goal of the task.
             points (np.ndarray): xyz information of the point cloud.
             colors (np.ndarray): rgb information of the point cloud for visualization.
-            si (object, optional): Space information for collision checking. Contain the TIS optimizer.
+            si (object, optional): Space information for collision checking. May contain the TIS optimizer.
             space (object, optional): Space information for collision checking.
+            diffco (bool, optional): Whether to use DiffCo for local motion validation. Defaults to False.
+            replan (bool, optional): Whether to replan the trajectory if the local motion is invalid. Defaults to False.
             debug (bool, optional): Whether to visualize the point cloud. Defaults to False.
 
         Returns:
@@ -268,6 +270,7 @@ class NeuralMP:
         obs["current_angles"] = q
         obs["goal_angles"] = goal_angles
         obs["compute_pcd_params"] = point_cloud
+        config_err = torch.norm(qt - goal_angles)
         if debug:
             visualize_point_cloud(point_cloud.squeeze().cpu().numpy()[:, :3])
 
@@ -276,7 +279,7 @@ class NeuralMP:
             qt = qt + self.policy.policy.get_action(obs_dict=obs)
 
             # Diffco optimization
-            if si is not None:
+            if diffco:
                 previous_qt = trajectory[-1].squeeze().detach().cpu().numpy()
                 qt_candidate_np = qt.squeeze().detach().cpu().numpy()
                 is_local_motion_valid, optimized_qt = is_motion_valid_diffco(previous_qt, qt_candidate_np, space, si)
@@ -284,8 +287,18 @@ class NeuralMP:
                     qt = torch.tensor(optimized_qt, device=self.device, dtype=torch.float32).unsqueeze(0)
                 else:
                     continue
+            elif replan:
+                previous_qt = trajectory[-1].squeeze().detach().cpu().numpy()
+                qt_candidate_np = qt.squeeze().detach().cpu().numpy()
+                is_local_motion_valid = is_motion_valid(previous_qt, qt_candidate_np, space, si)
+                if not is_local_motion_valid:
+                    continue
 
             trajectory.append(qt)
+            config_err = torch.norm(qt - goal_angles)
+            if config_err < 0.01:
+                planning_success = True
+                break
             samples = sampler(qt).type_as(point_cloud)
             point_cloud[:, : samples.shape[1], :3] = samples
             obs["current_angles"] = qt
@@ -324,15 +337,15 @@ class NeuralMP:
         # print(f"sim results:\nstep: {i+1}\npos_err: {pos_err*100} cm\nori_err: {ori_err} deg")
         # ////////////////////////////////////////////////
 
-        # * The modified version uses the goal joint angles to check if the goal is reached
-        for i in range(len(output_traj)):
-            # Check configuration error instead of end-effector pose error
-            config_err = np.linalg.norm(output_traj[i] - goal_config)
+        # # * The modified version uses the goal joint angles to check if the goal is reached
+        # for i in range(len(output_traj)):
+        #     # Check configuration error instead of end-effector pose error
+        #     config_err = np.linalg.norm(output_traj[i] - goal_config)
 
-            if config_err < 0.1:  # Adjust threshold as needed
-                planning_success = True
-                output_traj = output_traj[: (i + 1)]
-                break
+        #     if config_err < 0.1:  # Adjust threshold as needed
+        #         planning_success = True
+        #         output_traj = output_traj[: (i + 1)]
+        #         break
 
         print(f"sim results:\nstep: {i+1}\nconfig_err: {config_err}")
 
@@ -378,7 +391,7 @@ class NeuralMP:
         }
 
     @torch.no_grad()
-    def motion_plan_with_tto(self, start_config, goal_config, points, colors, batch_size=20):
+    def motion_plan_with_tto(self, start_config, goal_config, points, colors, batch_size=100):
         """
         Motion plan by rolling out the policy with batched samples and perform test time optimization
         to select the safest path to execute on the robot.
@@ -426,7 +439,7 @@ class NeuralMP:
         obs["goal_angles"] = goal_angles
         obs["compute_pcd_params"] = point_cloud
 
-        # limit max_rollout_len up to 100, so gpu memory does not explode
+        # limit max_rollout_len up to 200, so gpu memory does not explode
         max_rollout_len = min(self.max_rollout_len, 200)
 
         def sampler(config, gripper_width=self.gripper_width):
