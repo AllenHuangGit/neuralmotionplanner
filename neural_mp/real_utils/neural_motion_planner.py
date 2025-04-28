@@ -219,7 +219,7 @@ class NeuralMP:
         return xyz, obstacle_colors
 
     @torch.no_grad()
-    def motion_plan(self, start_config, goal_config, points, colors, si, space, diffco=False, replan=False, debug=False):
+    def motion_plan(self, start_config, goal_config, points, colors, si, space, attempt_goal_threshold=-1, diffco=False, replan=False, debug=False):
         """
         Motion plan by rolling out the policy.
 
@@ -230,6 +230,7 @@ class NeuralMP:
             colors (np.ndarray): rgb information of the point cloud for visualization.
             si (object, optional): Space information for collision checking. May contain the TIS optimizer.
             space (object, optional): Space information for collision checking.
+            attempt_goal_threshold (float, optional): Threshold for attempting to reach the goal. Defaults to -1, which means no attempt.
             diffco (bool, optional): Whether to use DiffCo for local motion validation. Defaults to False.
             replan (bool, optional): Whether to replan the trajectory if the local motion is invalid. Defaults to False.
             debug (bool, optional): Whether to visualize the point cloud. Defaults to False.
@@ -275,8 +276,13 @@ class NeuralMP:
             visualize_point_cloud(point_cloud.squeeze().cpu().numpy()[:, :3])
 
         ti0 = time.time()
+        attempted_goal = False
         for i in range(self.max_rollout_len):
-            qt = qt + self.policy.policy.get_action(obs_dict=obs)
+            if config_err < attempt_goal_threshold and not attempted_goal:
+                qt = goal_angles.clone()
+                attempted_goal = True
+            else:
+                qt = qt + self.policy.policy.get_action(obs_dict=obs)
 
             # Diffco optimization
             if diffco:
@@ -295,6 +301,7 @@ class NeuralMP:
                     continue
 
             trajectory.append(qt)
+            attempted_goal = False
             config_err = torch.norm(qt - goal_angles)
             if config_err < 0.01:
                 planning_success = True
@@ -303,7 +310,7 @@ class NeuralMP:
             point_cloud[:, : samples.shape[1], :3] = samples
             obs["current_angles"] = qt
             obs["compute_pcd_params"] = point_cloud
-            if i % 10 == 0:
+            if i % 20 == 0:
                 print(f"step: {i+1}, error: {torch.norm(qt - goal_angles)}")
                 if debug:
                     visualize_point_cloud(point_cloud.squeeze().cpu().numpy()[:, :3])
