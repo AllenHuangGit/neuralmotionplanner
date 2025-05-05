@@ -28,7 +28,7 @@ class NeuralMP:
         train_mode,
         in_hand,
         in_hand_params=None,
-        max_rollout_len=1500,
+        max_rollout_len=500,
         num_robot_points=2048,
         num_obstacle_points=4096,
         visualize=False,
@@ -395,6 +395,7 @@ class NeuralMP:
             'solved': planning_success,
             'path': output_traj,
             'planning_time': total_rollout_time,
+            'num_steps': i + 1,
         }
 
     @torch.no_grad()
@@ -446,8 +447,8 @@ class NeuralMP:
         obs["goal_angles"] = goal_angles
         obs["compute_pcd_params"] = point_cloud
 
-        # limit max_rollout_len up to 200, so gpu memory does not explode
-        max_rollout_len = min(self.max_rollout_len, 200)
+        # limit max_rollout_len up to 150, so gpu memory does not explode
+        max_rollout_len = min(self.max_rollout_len, 150)
 
         def sampler(config, gripper_width=self.gripper_width):
             gripper_cfg = gripper_width * torch.ones((config.shape[0], 1), device=config.device)
@@ -572,6 +573,7 @@ class NeuralMP:
             'solved': planning_success,
             'path': output_traj,
             'planning_time': total_rollout_time,
+            'num_steps': i + 1,
         }
     
     def execute_motion_plan(self, plan, speed):
